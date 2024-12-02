@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>物理实验数据处理系统</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>物理实验数据处理系统</h1>
+        
+        <!-- 添加使用说明区域 -->
+        <section id="guide-section">
+            <h2>使用指南 <button onclick="toggleGuide()" class="toggle-guide">显示/隐藏</button></h2>
+            <div class="guide-content" style="display: none;">
+                <div class="guide-step">
+                    <h3>1. 数据输入</h3>
+                    <ul>
+                        <li>点击"添加变量"按钮创建新的变量</li>
+                        <li>输入变量名（如：x、y、t等）</li>
+                        <li>在数据框中输入多组测量数据，用逗号或空格分隔</li>
+                        <li>输入仪器精度（最小分度值或测量不确定度）</li>
+                        <li>选择不确定度类型：
+                            <ul>
+                                <li>A类：适用于多次重复测量的数据</li>
+                                <li>B类：适用于仪器精度引起的不确定度</li>
+                            </ul>
+                        </li>
+                    </ul>
+                </div>
+
+                <div class="guide-step">
+                    <h3>2. 数据处理</h3>
+                    <ul>
+                        <li>点击每个变量行的"计算统计量"按钮获取基本统计信息</li>
+                        <li>统计结果包括：平均值、标准差、不确定度等</li>
+                        <li>系统自动计算标准不确定度和扩展不确定度(k=2)</li>
+                    </ul>
+                </div>
+
+                <div class="guide-step">
+                    <h3>3. 数据拟合</h3>
+                    <ul>
+                        <li>在"数据可视化"区域点击"添加曲线"可以绘制多条曲线</li>
+                        <li>选择X轴和Y轴变量</li>
+                        <li>可以显示或隐藏误差棒和拟合曲线</li>
+                        <li>支持图表缩放、平移和自定义范围</li>
+                        <li>拟合结果会自动计算并显示：
+                            <ul>
+                                <li>斜率和截距及其不确定度</li>
+                                <li>相关系数和标准误差</li>
+                                <li>完整的计算过程和公式</li>
+                            </ul>
+                        </li>
+                    </ul>
+                </div>
+
+                <div class="guide-step">
+                    <h3>4. 公式计算</h3>
+                    <ul>
+                        <li>在公式输入框中输入计算公式，例如：y = a*x + b</li>
+                        <li>支持的运算符：+, -, *, /, ^, sqrt(), sin(), cos(), exp()等</li>
+                        <li>可以使用拟合得到的参数进行计算</li>
+                        <li>点击"生成不确定度公式"自动生成不确定度传递公式</li>
+                        <li>系统会自动计算结果及其不确定度</li>
+                    </ul>
+                </div>
+
+                <div class="guide-step">
+                    <h3>5. 注意事项</h3>
+                    <ul>
+                        <li>所有数据必须使用国际单位制(SI)</li>
+                        <li>确保输入的数据格式正确（数字间用逗号或空格分隔）</li>
+                        <li>拟合参数会自动添加到可用变量列表中</li>
+                        <li>可以随时修改数据和重新计算</li>
+                        <li>建议先处理原始数据，再进行拟合和计算</li>
+                    </ul>
+                </div>
+
+                <div class="guide-step">
+                    <h3>示例：测量金属丝的杨氏模量</h3>
+                    <div class="example-content">
+                        <p class="formula">杨氏模量计算公式：E = (4mgL³)/(πd²D²)</p>
+                        <div class="example-data">
+                            <h4>实验数据：</h4>
+                            <ul>
+                                <li>金属丝直径(d)：0.35mm ± 0.01mm</li>
+                                <li>圆筒直径(D)：25.00mm ± 0.02mm</li>
+                                <li>金属丝长度(L)：800mm ± 1mm</li>
+                                <li>砝码质量(m)：50g、100g、150g、200g、250g（不确定度±0.1g）</li>
+                                <li>对应形变量(y)：0.52、1.05、1.58、2.10、2.63（mm，不确定度±0.01mm）</li>
+                                <li>重力加速度(g)：9.794 m/s²（已知常量）</li>
+                            </ul>
+                            <button onclick="loadExample()">加载示例数据</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
+        <!-- 变量定义区域 -->
+        <section id="variable-section">
+            <h2>变量定义</h2>
+            <div class="variable-input">
+                <button onclick="addVariable()">添加变量</button>
+                <div class="variable-header">
+                    <span>变量名</span>
+                    <span>数据组</span>
+                    <span>仪器精度</span>
+                    <span>单位</span>
+                    <span>不确定度类型</span>
+                    <span>操作</span>
+                </div>
+                <div id="variables-container"></div>
+            </div>
+        </section>
+
+        <!-- 公式定义区域 -->
+        <section id="formula-section">
+            <h2>公式定义</h2>
+            <div class="formula-input">
+                <div class="formula-group">
+                    <label>变量关系公式：</label>
+                    <textarea id="formula" placeholder="输入计算公式，例如: y = a*x + b"></textarea>
+                </div>
+                <div class="formula-group">
+                    <label>不确定度传递公式（可选）：</label>
+                    <textarea id="uncertainty-formula" placeholder="输入不确定度传递公式，例如: Δy = sqrt((∂y/∂x * Δx)^2 + (∂y/∂a * Δa)^2 + (∂y/∂b * Δb)^2)"></textarea>
+                </div>
+                <div class="formula-controls">
+                    <button onclick="calculateResult()">计算结果</button>
+                    <button onclick="generateUncertaintyFormula()">生成不确定度公式</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- 不确定度计算区域 -->
+        <section id="uncertainty-section">
+            <h2>不确定度计算</h2>
+            <div class="uncertainty-input">
+                <div class="uncertainty-type">
+                    <label>
+                        <input type="radio" name="uncertainty-type" value="a" checked> A类不确定度
+                    </label>
+                    <label>
+                        <input type="radio" name="uncertainty-type" value="b"> B类不确定度
+                    </label>
+                </div>
+                <div id="uncertainty-details">
+                    <!-- A类不确定度输入区域 -->
+                    <div id="type-a-input">
+                        <p>多次测量数据：</p>
+                        <textarea id="measurements" placeholder="输入多次测量数据，每个数据用逗号或空格分隔"></textarea>
+                        <button onclick="calculateTypeAUncertainty()">计算A类不确定度</button>
+                    </div>
+                    <!-- B类不确定度输入区域 -->
+                    <div id="type-b-input" style="display: none;">
+                        <p>仪器精度：<input type="number" id="instrument-precision" step="0.0001"></p>
+                        <p>置信概率：
+                            <select id="confidence-level">
+                                <option value="0.6826">68.26%（1σ）</option>
+                                <option value="0.9544">95.44%（2σ）</option>
+                                <option value="0.9973">99.73%（3σ）</option>
+                            </select>
+                        </p>
+                        <button onclick="calculateTypeBUncertainty()">计算B类不确定度</button>
+                    </div>
+                </div>
+            </div>
+            <div id="uncertainty-results"></div>
+        </section>
+
+        <!-- 数据可视化区域 -->
+        <section id="visualization-section">
+            <h2>数据可视化</h2>
+            <div class="plot-controls">
+                <div class="curve-controls">
+                    <button onclick="addCurve()">添加曲线</button>
+                    <div id="curves-container">
+                        <div class="curve-row">
+                            <select class="x-axis"></select>
+                            <select class="y-axis"></select>
+                            <label><input type="checkbox" class="show-fit" checked> 显示拟合</label>
+                            <button onclick="removeCurve(this)">删除</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="plot-options">
+                    <label>
+                        <input type="checkbox" id="show-error-bars" checked> 显示误差棒
+                    </label>
+                    <label>
+                        <input type="checkbox" id="auto-range" checked> 自动范围
+                    </label>
+                    <div class="axis-range" style="display: none;">
+                        <div>
+                            <label>X轴范围：</label>
+                            <input type="number" id="x-min" step="any"> 到
+                            <input type="number" id="x-max" step="any">
+                        </div>
+                        <div>
+                            <label>Y轴范围：</label>
+                            <input type="number" id="y-min" step="any"> 到
+                            <input type="number" id="y-max" step="any">
+                        </div>
+                    </div>
+                </div>
+                <button onclick="updatePlot()">更新图像</button>
+            </div>
+            <div id="plot-canvas"></div>
+        </section>
+
+        <!-- 结果显示区域 -->
+        <section id="results-section">
+            <h2>计算结果</h2>
+            <div id="results-container"></div>
+        </section>
+    </div>
+    
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/9.4.4/math.js"></script>
+    <script src="script.js"></script>
+</body>
+</html> 

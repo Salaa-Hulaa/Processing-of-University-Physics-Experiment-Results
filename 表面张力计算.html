@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>表面张力计算</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background-color: #f4f4f9;
+        }
+        h1 {
+            color: #333;
+        }
+        p, label {
+            font-size: 1.2em;
+            color: #555;
+        }
+        input {
+            margin: 5px;
+            padding: 5px;
+            font-size: 1em;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 1em;
+            margin-top: 20px;
+            cursor: pointer;
+        }
+        @media (max-width: 600px) {
+            h1 {
+                font-size: 1.5em;
+            }
+            p, label {
+                font-size: 1em;
+            }
+        }
+    </style>
+    <script>
+        function calculateSurfaceTension() {
+            // 获取用户输入
+            const masses = document.getElementById('masses').value.split(',').map(Number);
+            const voltages = document.getElementById('voltages').value.split(',').map(Number);
+            const V1 = document.getElementById('V1').value.split(',').map(Number);
+            const V2 = document.getElementById('V2').value.split(',').map(Number);
+            const D_out = parseFloat(document.getElementById('D_out').value);
+            const d = parseFloat(document.getElementById('d').value);
+
+            // 转换单位
+            const masses_kg = masses.map(m => m * 1e-6);
+            const voltages_v = voltages.map(v => v / 1000);
+            const V1_v = V1.map(v => v / 1000);
+            const V2_v = V2.map(v => v / 1000);
+            const D_out_m = D_out * 0.001;
+            const d_m = d * 0.001;
+
+            const g = 9.8; // m/s^2
+            const forces = masses_kg.map(m => m * g);
+
+            // 线性拟合 (简单实现)
+            const n = voltages_v.length;
+            const sumV = voltages_v.reduce((a, b) => a + b, 0);
+            const sumF = forces.reduce((a, b) => a + b, 0);
+            const sumVF = voltages_v.map((v, i) => v * forces[i]).reduce((a, b) => a + b, 0);
+            const sumV2 = voltages_v.map(v => v * v).reduce((a, b) => a + b, 0);
+
+            const slope = (n * sumVF - sumV * sumF) / (n * sumV2 - sumV * sumV);
+            const intercept = (sumF - slope * sumV) / n;
+
+            const F1 = V1_v.map(v => slope * v + intercept);
+            const F2 = V2_v.map(v => slope * v + intercept);
+
+            // 更新的表面张力系数计算公式
+            const alpha = F1.map((f1, i) => (f1 - F2[i]) / (Math.PI * (D_out_m + d_m)));
+            const alpha_mean = alpha.reduce((a, b) => a + b, 0) / alpha.length;
+            const alpha_std = Math.sqrt(alpha.map(a => Math.pow(a - alpha_mean, 2)).reduce((a, b) => a + b, 0) / (alpha.length - 1));
+
+            // B 类不确定度
+            const caliper_uncertainty = 0.02 * 1e-3;
+            const D_diff = D_out_m - d_m;
+            const U_b = 2 * Math.PI * caliper_uncertainty / D_diff;
+
+            // 合成不确定度
+            const U_c = Math.sqrt(Math.pow(alpha_std, 2) + Math.pow(U_b, 2));
+            const U_ext = 2 * U_c;
+
+            // 显示结果
+            document.getElementById('result').innerHTML = `
+                <p>拉力和电压的线性拟合关系式为：F = ${slope.toFixed(4)} * V + ${intercept.toFixed(4)}</p>
+                <p>表面张力系数的平均值为：${alpha_mean.toFixed(4)} N/m</p>
+                <p>表面张力系数的A类不确定度为：${alpha_std.toFixed(4)} N/m</p>
+                <p>B类不确定度为：${U_b.toFixed(4)} N/m</p>
+                <p>合成不确定度为：${U_c.toFixed(4)} N/m</p>
+                <p>扩展不确定度为：± ${U_ext.toFixed(4)} N/m</p>
+            `;
+        }
+    </script>
+</head>
+<body>
+    <h1>表面张力计算</h1>
+    <label for="masses">质量数据 (mg):</label>
+    <input type="text" id="masses" value="0,500,1000,1500,2000,2500,3000">
+    <label for="voltages">电压数据 (mv):</label>
+    <input type="text" id="voltages" value="0.15,13.55,27.3,41.75,55.65,69.2,82.4">
+    <label for="V1">断膜前电压 (mv):</label>
+    <input type="text" id="V1" value="43.2,43.9,42.9,42.8,43.0,44.1,44.4">
+    <label for="V2">断膜后电压 (mv):</label>
+    <input type="text" id="V2" value="0.3,2.1,0.3,0.7,0.7,0.5,0.1">
+    <label for="D_out">外径 (mm):</label>
+    <input type="text" id="D_out" value="35.00">
+    <label for="d">内径 (mm):</label>
+    <input type="text" id="d" value="32.50">
+    <button onclick="calculateSurfaceTension()">计算</button>
+    <div id="result"></div>
+</body>
+</html>
