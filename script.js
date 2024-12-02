@@ -330,7 +330,7 @@ function calculateResult() {
                 <ol>
                     <li>不确定度修约为一位或两位有效数字：
                         <ul>
-                            <li>当第一位数字为1或2时，保留两位有效数字</li>
+                            <li>当第一位数字为12时，保留两位有效数字</li>
                             <li>当第一位数字大于2时，保留一位有效数字</li>
                         </ul>
                     </li>
@@ -775,4 +775,242 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     });
-}); 
+});
+
+// 在现有代码后添加导出功能
+function exportData() {
+    const data = {
+        variables: [],
+        formula: document.getElementById('formula').value,
+        uncertaintyFormula: document.getElementById('uncertainty-formula').value,
+        results: document.getElementById('results-container').innerHTML
+    };
+
+    // 收集所有变量数据
+    document.querySelectorAll('.variable-row').forEach(row => {
+        data.variables.push({
+            name: row.querySelector('.var-name').value,
+            data: row.querySelector('.var-data').value,
+            precision: row.querySelector('.var-precision').value,
+            unit: row.querySelector('.var-unit').value,
+            uncertaintyType: row.querySelector('.uncertainty-type').value,
+            stats: row.dataset.stats
+        });
+    });
+
+    // 创建下载链接
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '物理实验数据_' + new Date().toISOString().slice(0,10) + '.json';
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+// 添加数据导入功能
+function importData(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        try {
+            const data = JSON.parse(e.target.result);
+            
+            // 清除现有数据
+            document.getElementById('variables-container').innerHTML = '';
+            
+            // 导入变量数据
+            data.variables.forEach(v => {
+                const varDiv = document.createElement('div');
+                varDiv.className = 'variable-row';
+                varDiv.innerHTML = `
+                    <input type="text" placeholder="变量名" class="var-name" value="${v.name}">
+                    <textarea class="var-data" placeholder="输入多组数据，用逗号或空格分隔">${v.data}</textarea>
+                    <input type="number" placeholder="仪器精度" class="var-precision" step="any" value="${v.precision}">
+                    <input type="text" placeholder="单位" class="var-unit" value="${v.unit}">
+                    <div class="uncertainty-controls">
+                        <select class="uncertainty-type">
+                            <option value="a" ${v.uncertaintyType === 'a' ? 'selected' : ''}>A类</option>
+                            <option value="b" ${v.uncertaintyType === 'b' ? 'selected' : ''}>B类</option>
+                        </select>
+                    </div>
+                    <div class="variable-actions">
+                        <button onclick="removeVariable(this)">删除</button>
+                        <button onclick="calculateVariableStats(this)">计算统计量</button>
+                    </div>
+                `;
+                
+                document.getElementById('variables-container').appendChild(varDiv);
+                if (v.stats) {
+                    varDiv.dataset.stats = v.stats;
+                    calculateVariableStats(varDiv.querySelector('.variable-actions button:last-child'));
+                }
+            });
+
+            // 导入公式
+            document.getElementById('formula').value = data.formula || '';
+            document.getElementById('uncertainty-formula').value = data.uncertaintyFormula || '';
+            
+            // 更新变量选择下拉框
+            updateVariableSelects();
+            
+            // 如果有结果，显示结果
+            if (data.results) {
+                document.getElementById('results-container').innerHTML = data.results;
+            }
+
+        } catch (error) {
+            alert('导入数据格式错误：' + error.message);
+        }
+    };
+    reader.readAsText(file);
+}
+
+// 添加单位转换功能
+const UnitConverter = {
+    // 长度单位转换
+    length: {
+        mm: 0.001,    // 毫米到米
+        cm: 0.01,     // 厘米到米
+        m: 1,         // 米（基准单位）
+        km: 1000      // 千米到米
+    },
+    
+    // 质量单位转换
+    mass: {
+        mg: 0.000001, // 毫克到千克
+        g: 0.001,     // 克到千克
+        kg: 1,        // 千克（基准单位）
+        t: 1000       // 吨到千克
+    },
+    
+    // 时间单位转换
+    time: {
+        ms: 0.001,    // 毫秒到秒
+        s: 1,         // 秒（基准单位）
+        min: 60,      // 分钟到秒
+        h: 3600       // 小时到秒
+    },
+    
+    // 力单位转换
+    force: {
+        N: 1,         // 牛顿（基准单位）
+        kN: 1000,     // 千牛顿到牛顿
+        dyn: 0.00001  // 达因到牛顿
+    },
+    
+    // 压力单位转换
+    pressure: {
+        Pa: 1,        // 帕斯卡（基准单位）
+        kPa: 1000,    // 千帕到帕斯卡
+        MPa: 1000000, // 兆帕到帕斯卡
+        atm: 101325   // 标准大气压到帕斯卡
+    },
+
+    // 转换函数
+    convert(value, fromUnit, toUnit, type) {
+        const units = this[type];
+        if (!units) throw new Error(`未支持的单位类型：${type}`);
+        if (!units[fromUnit]) throw new Error(`未知的源单位：${fromUnit}`);
+        if (!units[toUnit]) throw new Error(`未知的目标单位：${toUnit}`);
+        
+        return value * units[fromUnit] / units[toUnit];
+    }
+}; 
+
+// 改进不确定度计算函数
+function calculateUncertainty(data, type, params = {}) {
+    if (type === 'a') {
+        // A��不确定度计算
+        const n = data.length;
+        if (n < 2) throw new Error('A类不确定度需要至少2个数据点');
+        
+        const mean = data.reduce((a, b) => a + b) / n;
+        const variance = data.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / (n - 1);
+        const standardDeviation = Math.sqrt(variance);
+        const uncertainty = standardDeviation / Math.sqrt(n);
+        
+        return {
+            mean,
+            standardDeviation,
+            uncertainty,
+            relativeUncertainty: uncertainty / Math.abs(mean) * 100
+        };
+    } else if (type === 'b') {
+        // B类不确定度计算
+        const { precision, confidenceLevel = 0.6826 } = params;
+        if (!precision) throw new Error('B类不确定度需要仪器精度值');
+        
+        // 根据置信概率确定系数
+        let coefficient;
+        switch (confidenceLevel) {
+            case 0.6826: coefficient = 1; break;    // 1σ
+            case 0.9544: coefficient = 2; break;    // 2σ
+            case 0.9973: coefficient = 3; break;    // 3σ
+            default: coefficient = 1;
+        }
+        
+        const uncertainty = precision / (coefficient * Math.sqrt(3));
+        return { uncertainty };
+    }
+    
+    throw new Error('未知的不确定度类型');
+} 
+
+// 添加更多拟合模型
+const FittingModels = {
+    // 线性拟合 y = ax + b
+    linear(xData, yData) {
+        return linearFit(xData, yData);
+    },
+    
+    // 幂函数拟合 y = ax^b
+    power(xData, yData) {
+        // 取对数转换为线性拟合
+        const logX = xData.map(x => Math.log(x));
+        const logY = yData.map(y => Math.log(y));
+        const { slope, intercept } = linearFit(logX, logY);
+        return {
+            a: Math.exp(intercept),
+            b: slope,
+            type: 'power'
+        };
+    },
+    
+    // 指数拟合 y = ae^(bx)
+    exponential(xData, yData) {
+        // 取对数转换为线性拟合
+        const logY = yData.map(y => Math.log(y));
+        const { slope, intercept } = linearFit(xData, logY);
+        return {
+            a: Math.exp(intercept),
+            b: slope,
+            type: 'exponential'
+        };
+    },
+    
+    // 多项式拟合
+    polynomial(xData, yData, degree = 2) {
+        // 使用最小二乘法求解多项式系数
+        const matrix = [];
+        const vector = [];
+        
+        for (let i = 0; i <= degree; i++) {
+            matrix[i] = [];
+            for (let j = 0; j <= degree; j++) {
+                matrix[i][j] = xData.reduce((sum, x) => sum + Math.pow(x, i + j), 0);
+            }
+            vector[i] = xData.reduce((sum, x, k) => sum + yData[k] * Math.pow(x, i), 0);
+        }
+        
+        // 使用math.js求解线性方程组
+        const coefficients = math.lusolve(matrix, vector);
+        return {
+            coefficients: coefficients.map(c => c[0]),
+            type: 'polynomial',
+            degree
+        };
+    }
+}; 
