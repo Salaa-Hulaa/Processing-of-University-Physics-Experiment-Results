@@ -163,25 +163,28 @@ button:hover {
 /* 添加计算步骤的样式 */
 .calculation-steps {
     background-color: #f8f9fa;
-    padding: 20px;
+    padding: 15px;
     border-radius: 5px;
-    margin-top: 20px;
+    margin-top: 15px;
 }
 
 .step {
-    margin-bottom: 25px;
-    padding: 15px;
+    margin-bottom: 15px;
+    padding: 10px;
     background-color: white;
-    border-radius: 5px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    border-left: 4px solid #2196F3;
+    border-radius: 4px;
 }
 
 .step h4 {
     color: #2196F3;
     margin-top: 0;
-    margin-bottom: 15px;
-    border-bottom: 2px solid #e3f2fd;
-    padding-bottom: 8px;
+    margin-bottom: 10px;
+}
+
+.step p {
+    margin: 5px 0;
+    font-family: "Courier New", monospace;
 }
 
 .variable-details, .derivative-details {
@@ -522,4 +525,75 @@ p.formula {
     font-weight: bold;
     color: #1976D2;
 }
- 
+
+/* 添加单位转换器样式 */
+.unit-converter {
+    margin: 15px 0;
+    padding: 15px;
+    background-color: #f8f9fa;
+    border-radius: 5px;
+}
+
+.converter-controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin: 10px 0;
+}
+
+.converter-controls input[type="number"] {
+    width: 120px;
+}
+
+#conversion-result {
+    margin-top: 10px;
+    padding: 10px;
+    background-color: #e3f2fd;
+    border-radius: 4px;
+}
+
+/* 更新拟合控制样式 */
+.fit-type {
+    min-width: 120px;
+}
+
+/* 示例：移除未使用的类 */
+.variable-actions button {
+    /* 保留必要的按钮样式 */
+    /* ... */
+}
+
+/* 添加或调整样式以支持 README 中描述的功能 */
+
+/* ...existing styles... */
+
+.error {
+    color: red;
+    font-weight: bold;
+}
+
+.success {
+    color: green;
+    font-weight: bold;
+}
+
+/* ...existing styles... */
+
+.calculation-steps .uncertainty-term {
+    margin: 10px 0;
+    padding: 10px;
+    background-color: #f8f9fa;
+    border-left: 3px solid #2196F3;
+}
+
+.calculation-steps .final-result {
+    font-size: 1.2em;
+    font-weight: bold;
+    text-align: center;
+    padding: 10px;
+    margin: 10px 0;
+    background-color: #e3f2fd;
+    border-radius: 4px;
+}
+
+/* ...existing styles... */

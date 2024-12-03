@@ -5,6 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>物理实验数据处理系统</title>
     <link rel="stylesheet" href="styles.css">
+    <style>
+        .error {
+            color: red;
+            font-weight: bold;
+        }
+        .success {
+            color: green;
+            font-weight: bold;
+        }
+        /* 新增样式用于标识输入错误 */
+        input.error {
+            border: 2px solid red;
+        }
+    </style>
 </head>
 <body>
     <div class="container">
@@ -21,7 +35,7 @@
                         <li>输入变量名（如：x、y、t等）</li>
                         <li>在数据框中输入多组测量数据，用逗号或空格分隔</li>
                         <li>输入仪器精度（最小分度值或测量不确定度）</li>
-                        <li>选择不确定度类型：
+                        <li>���择不确定度类型：
                             <ul>
                                 <li>A类：适用于多次重复测量的数据</li>
                                 <li>B类：适用于仪器精度引起的不确定度</li>
@@ -60,6 +74,13 @@
                     <h3>4. 公式计算</h3>
                     <ul>
                         <li>在公式输入框中输入计算公式，例如：y = a*x + b</li>
+                        <li>**注意使用有��的数学运算符和符号：**
+                            <ul>
+                                <li>使用 'pi' 代替 'π'</li>
+                                <li>使用 '^' 进行幂运算，如 L^3 代替 L³</li>
+                                <li>使用有效的函数名，如 sqrt(), pow()</li>
+                            </ul>
+                        </li>
                         <li>支持的运算符：+, -, *, /, ^, sqrt(), sin(), cos(), exp()等</li>
                         <li>可以使用拟合得到的参数进行计算</li>
                         <li>点击"生成不确定度公式"自动生成不确定度传递公式</li>
@@ -125,7 +146,7 @@
                     <textarea id="formula" placeholder="输入计算公式，例如: y = a*x + b"></textarea>
                 </div>
                 <div class="formula-group">
-                    <label>不确定度传递公式（可选）：</label>
+                    <label>不确定度传递公式（可选）��</label>
                     <textarea id="uncertainty-formula" placeholder="输入不确定度传递公式，例如: Δy = sqrt((∂y/∂x * Δx)^2 + (∂y/∂a * Δa)^2 + (∂y/∂b * Δb)^2)"></textarea>
                 </div>
                 <div class="formula-controls">
@@ -141,10 +162,10 @@
             <div class="uncertainty-input">
                 <div class="uncertainty-type">
                     <label>
-                        <input type="radio" name="uncertainty-type" value="a" checked> A类不确定度
+                        <input type="radio" name="uncertainty-type" value="a" onchange="toggleUncertaintyType('a')" checked> A类不确定度
                     </label>
                     <label>
-                        <input type="radio" name="uncertainty-type" value="b"> B类不确定度
+                        <input type="radio" name="uncertainty-type" value="b" onchange="toggleUncertaintyType('b')"> B类不确定度
                     </label>
                 </div>
                 <div id="uncertainty-details">
@@ -152,7 +173,7 @@
                     <div id="type-a-input">
                         <p>多次测量数据：</p>
                         <textarea id="measurements" placeholder="输入多次测量数据，每个数据用逗号或空格分隔"></textarea>
-                        <button onclick="calculateTypeAUncertainty()">计算A类不确定度</button>
+                        <button onclick="calculateUncertaintyA()">计算A类不确定度</button>
                     </div>
                     <!-- B类不确定度输入区域 -->
                     <div id="type-b-input" style="display: none;">
@@ -164,7 +185,7 @@
                                 <option value="0.9973">99.73%（3σ）</option>
                             </select>
                         </p>
-                        <button onclick="calculateTypeBUncertainty()">计算B类不确定度</button>
+                        <button onclick="calculateUncertaintyB()">计算B类不确定度</button>
                     </div>
                 </div>
             </div>
@@ -211,6 +232,14 @@
             <div id="plot-canvas"></div>
         </section>
 
+        <!-- 工具区域 -->
+        <section id="tools-section">
+            <h2>工具</h2>
+            <div class="tools-container">
+                <button onclick="showUnitConverter()">单位转换器</button>
+            </div>
+        </section>
+
         <!-- 结果显示区域 -->
         <section id="results-section">
             <h2>计算结果</h2>
@@ -222,4 +251,4 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/9.4.4/math.js"></script>
     <script src="script.js"></script>
 </body>
-</html> 
+</html>

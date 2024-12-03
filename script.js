@@ -207,310 +207,233 @@ document.addEventListener('DOMContentLoaded', () => {
     addVariable();
 });
 
-// 计算结果函数
+// 修改计算结果函数以处理多表达式并增强错误处理
 function calculateResult() {
-    const formula = document.getElementById('formula').value;
+    const formula = document.getElementById('formula').value.trim(); // 添加trim()去除空白字符
     const resultsContainer = document.getElementById('results-container');
     
-    try {
-        // 首先创建计算步骤容器
-        resultsContainer.innerHTML = '<div class="calculation-steps"><h4>计算过程</h4></div>';
-        const calculationSteps = resultsContainer.querySelector('.calculation-steps');
+    if (!formula) {
+        resultsContainer.innerHTML = '<p class="error">请填写公式。</p>';
+        return;
+    }
 
-        // 收集变量数据和计算过程
-        const variables = {};
+    try {
+        // 创建计算步骤容器
+        const calculationSteps = document.createElement('div');
+        calculationSteps.className = 'calculation-steps';
+        
+        // 第1步：收集变量数据
+        const variableStep = document.createElement('div');
+        variableStep.className = 'step';
+        const scope = { pi: Math.PI, e: Math.E };
         const uncertainties = {};
-        const variablesStep = document.createElement('div');
-        variablesStep.className = 'step';
-        variablesStep.innerHTML = '<h5>1. 变量值及其不确定度</h5>';
+        const variableData = {};
         
         document.querySelectorAll('.variable-row').forEach(row => {
-            const name = row.querySelector('.var-name').value;
-            const stats = JSON.parse(row.dataset.stats || '{}');
-            if (stats.mean !== undefined) {
-                variables[name] = stats.mean;
-                uncertainties[name] = stats.uncertainty;
-                variablesStep.innerHTML += `
-                    <div class="variable-value">
-                        <p>${name} = ${stats.mean.toFixed(6)} ± ${stats.uncertainty.toFixed(6)}</p>
-                        <p>相对不确定度：${((stats.uncertainty/Math.abs(stats.mean))*100).toFixed(2)}%</p>
-                    </div>
-                `;
+            const name = row.querySelector('.var-name').value.trim();
+            if (!name) return;
+            
+            try {
+                const stats = JSON.parse(row.dataset.stats || '{}');
+                if (stats.mean !== undefined) {
+                    scope[name] = stats.mean;
+                    uncertainties[name] = stats.uncertainty;
+                    variableData[name] = {
+                        mean: stats.mean,
+                        uncertainty: stats.uncertainty,
+                        unit: stats.unit
+                    };
+                }
+            } catch (e) {
+                console.warn(`解析变量 ${name} 的统计数据时出错:`, e);
             }
         });
-        calculationSteps.appendChild(variablesStep);
 
-        // 添加常量
-        variables['pi'] = Math.PI;
-
-        // 显示计算公式
-        const formulaStep = document.createElement('div');
-        formulaStep.className = 'step';
-        formulaStep.innerHTML = `
-            <h5>2. 计算公式</h5>
-            <p class="formula">${formula}</p>
-        `;
-        calculationSteps.appendChild(formulaStep);
-
-        // 分割多个表达式
-        const expressions = formula.split(';').map(expr => expr.trim());
+        // 第2步：计算表达式
+        const expressions = formula.split(';').filter(expr => expr.trim());
+        let mainResult;
         
-        // 依次执行每个表达式
-        let result;
-        expressions.forEach(expr => {
-            if (expr) {
-                result = math.evaluate(expr, variables);
-                const assignMatch = expr.match(/(\w+)\s*=/);
-                if (assignMatch) {
-                    variables[assignMatch[1]] = result;
+        expressions.forEach((expr, index) => {
+            const result = math.evaluate(expr, scope);
+            const assignMatch = expr.match(/(\w+)\s*=\s*(.+)/);
+            if (assignMatch) {
+                const varName = assignMatch[1];
+                scope[varName] = result;
+                if (index === expressions.length - 1) {
+                    mainResult = { name: varName, value: result };
                 }
             }
         });
 
-        // 计算不确定度传递
-        const mainExpr = expressions[expressions.length - 1];
-        const parsedFormula = math.parse(mainExpr.split('=')[1]);
-        let sumSquares = 0;
-        
-        // 显示不确定度传递计算过程
-        const uncertaintyStep = document.createElement('div');
-        uncertaintyStep.className = 'step';
-        uncertaintyStep.innerHTML = '<h5>3. 不确定度传递计算</h5>';
-        
-        for (const [name, value] of Object.entries(variables)) {
-            if (uncertainties[name]) {
-                try {
-                    const derivative = math.derivative(parsedFormula, name);
-                    const contribution = math.evaluate(
-                        `(${derivative.toString()})^2 * (${uncertainties[name]})^2`,
-                        variables
-                    );
-                    sumSquares += contribution;
-                    
-                    uncertaintyStep.innerHTML += `
-                        <div class="uncertainty-contribution">
-                            <p>∂E/∂${name} = ${derivative.toString()}</p>
-                            <p>${name}的不确定度贡献：${Math.sqrt(contribution).toFixed(6)}</p>
+        // 第3步：计算不确定度传递
+        if (mainResult) {
+            const mainExpr = expressions[expressions.length - 1].split('=')[1].trim();
+            const parsedExpr = math.parse(mainExpr);
+            const variables = Object.keys(scope).filter(v => v !== 'pi' && v !== 'e');
+            let uncertaintySum = 0;
+            const uncertaintyTerms = [];
+
+            variables.forEach(variable => {
+                if (uncertainties[variable]) {
+                    try {
+                        const derivative = math.derivative(parsedExpr, variable);
+                        const derivativeValue = derivative.evaluate(scope);
+                        const contribution = Math.pow(derivativeValue * uncertainties[variable], 2);
+                        uncertaintySum += contribution;
+                        
+                        uncertaintyTerms.push({
+                            variable,
+                            derivative: derivative.toString(),
+                            derivativeValue,
+                            uncertainty: uncertainties[variable],
+                            contribution: Math.sqrt(contribution)
+                        });
+                    } catch (e) {
+                        console.warn(`计算变量 ${variable} 的不确定度贡献时出错:`, e);
+                    }
+                }
+            });
+
+            const totalUncertainty = Math.sqrt(uncertaintySum);
+            const relativeUncertainty = (totalUncertainty / Math.abs(mainResult.value)) * 100;
+
+            // 显示计算结果
+            calculationSteps.innerHTML = `
+                <div class="step">
+                    <h4>1. 变量及其不确定度</h4>
+                    ${Object.entries(variableData).map(([name, data]) => 
+                        `<p>${name} = ${data.mean.toFixed(6)} ± ${data.uncertainty.toFixed(6)} ${data.unit}</p>`
+                    ).join('')}
+                </div>
+                <div class="step">
+                    <h4>2. 不确定度传递计算</h4>
+                    ${uncertaintyTerms.map(term => `
+                        <div class="uncertainty-term">
+                            <p>∂(${mainResult.name})/∂${term.variable} = ${term.derivative}</p>
+                            <p>值 = ${term.derivativeValue.toFixed(6)}</p>
+                            <p>贡献 = ${term.contribution.toFixed(6)}</p>
                         </div>
-                    `;
-                } catch (e) {
-                    console.log(`跳过变量 ${name} 的不确定度计算: ${e.message}`);
-                }
-            }
+                    `).join('')}
+                </div>
+                <div class="step">
+                    <h4>3. 最终结果</h4>
+                    <p>计算值：${mainResult.value.toFixed(6)}</p>
+                    <p>合成标准不确定度：${totalUncertainty.toFixed(6)}</p>
+                    <p>相对不确定度：${relativeUncertainty.toFixed(2)}%</p>
+                    <p>扩展不确定度(k=2)：${(2 * totalUncertainty).toFixed(6)}</p>
+                    <p class="final-result">${mainResult.name} = (${mainResult.value.toFixed(6)} ± ${(2 * totalUncertainty).toFixed(6)})</p>
+                </div>
+            `;
+            
+            resultsContainer.innerHTML = '';
+            resultsContainer.appendChild(calculationSteps);
         }
-        calculationSteps.appendChild(uncertaintyStep);
-
-        // 计算最终结果
-        const uncertainty = Math.sqrt(sumSquares);
-        const relativeUncertainty = (uncertainty / Math.abs(result)) * 100;
-        const expandedUncertainty = 2 * uncertainty;
-        const relativeExpandedUncertainty = 2 * relativeUncertainty;
-
-        // 显示初步结果
-        const resultStep = document.createElement('div');
-        resultStep.className = 'step';
-        resultStep.innerHTML = `
-            <h5>4. 计算结果</h5>
-            <p>计算值：${result.toFixed(6)} Pa</p>
-            <p>标准不确定度：${uncertainty.toFixed(6)} Pa</p>
-            <p>相对标准不确定度：${relativeUncertainty.toFixed(2)}%</p>
-            <p>扩展不确定度(k=2)：${expandedUncertainty.toFixed(6)} Pa</p>
-            <p>相对扩展不确定度：${relativeExpandedUncertainty.toFixed(2)}%</p>
-        `;
-        calculationSteps.appendChild(resultStep);
-
-        // 添加修约过程
-        const finalResult = RoundingRules.formatFinalResult(result, expandedUncertainty, 'Pa');
-        const roundingStep = document.createElement('div');
-        roundingStep.className = 'step';
-        roundingStep.innerHTML = `
-            <h5>5. 结果修约</h5>
-            <div class="rounding-process">
-                <p>修约规则：</p>
-                <ol>
-                    <li>不确定度修约为一位或两位有效数字：
-                        <ul>
-                            <li>当第一位数字为12时，保留两位有效数字</li>
-                            <li>当第一位数字大于2时，保留一位有效数字</li>
-                        </ul>
-                    </li>
-                    <li>测量结果的末位与不确定度的末位对齐</li>
-                </ol>
-                
-                <p>修约过程：</p>
-                <ol>
-                    <li>原始不确定度：${expandedUncertainty.toFixed(6)} Pa</li>
-                    <li>修约后的不确定度：${finalResult.uncertainty} Pa</li>
-                    <li>原始测量值：${result.toFixed(6)} Pa</li>
-                    <li>修约后的测量值：${finalResult.value} Pa</li>
-                </ol>
-
-                <p class="final-result">最终结果：${finalResult.formatted}</p>
-                <p class="relative-uncertainty">相对扩展不确定度：${RoundingRules.roundToDecimalPlaces(relativeExpandedUncertainty, 1)}%</p>
-            </div>
-        `;
-        calculationSteps.appendChild(roundingStep);
-
     } catch (error) {
         resultsContainer.innerHTML = `
-            <p style="color: red;">计算错误：${error.message}</p>
-            <p>请检查公式格式是否正确，确保：</p>
+            <p class="error">计算错误：${error.message}</p>
+            <p>请检查：</p>
             <ul>
-                <li>每个表达式用分号(;)分隔</li>
-                <li>变量名合法且已定义</li>
-                <li>数学运算符使用正确</li>
+                <li>所有变量是否已正确计算统计量</li>
+                <li>公式格式是否正确（每个表达式用分号分隔）</li>
+                <li>变量名是否与输入匹配</li>
+                <li>数学运算符是否使用正确</li>
             </ul>
         `;
     }
 }
 
+// 获取变量单位
+function getUnit(variableName) {
+    const variableRow = Array.from(document.getElementsByClassName('variable-row'))
+        .find(row => row.querySelector('.var-name').value === variableName);
+    return variableRow ? variableRow.querySelector('.var-unit').value : '';
+}
+
 // 添加示例数据加载函数
-function loadExample() {
-    // 清除现有变量
-    document.getElementById('variables-container').innerHTML = '';
-    
-    // 添加各个变量
-    const variables = [
-        {
-            name: 'm',
-            data: '0.050, 0.100, 0.150, 0.200, 0.250',
-            precision: '0.0001',
-            unit: 'kg',
-            type: 'b'
-        },
-        {
-            name: 'y',
-            data: '0.52, 1.05, 1.58, 2.10, 2.63',
-            precision: '0.01',
-            unit: 'mm',
-            type: 'b'
-        },
-        {
-            name: 'd',
-            data: '0.35',
-            precision: '0.01',
-            unit: 'mm',
-            type: 'b'
-        },
-        {
-            name: 'D',
-            data: '25.00',
-            precision: '0.02',
-            unit: 'mm',
-            type: 'b'
-        },
-        {
-            name: 'L',
-            data: '800',
-            precision: '1',
-            unit: 'mm',
-            type: 'b'
-        }
-    ];
-
-    // 创建变量输入行并填充数据
-    variables.forEach(v => {
-        const varDiv = document.createElement('div');
-        varDiv.className = 'variable-row';
+async function loadExample() {
+    try {
+        // 清除现有数据和结果
+        document.getElementById('variables-container').innerHTML = '';
+        document.getElementById('results-container').innerHTML = '';
         
-        varDiv.innerHTML = `
-            <input type="text" placeholder="变量名" class="var-name" value="${v.name}">
-            <textarea class="var-data" placeholder="输入多组数据，用逗号或空格分隔">${v.data}</textarea>
-            <input type="number" placeholder="仪器精度" class="var-precision" step="any" value="${v.precision}">
-            <input type="text" placeholder="单位" class="var-unit" value="${v.unit}">
-            <div class="uncertainty-controls">
-                <select class="uncertainty-type">
-                    <option value="a" ${v.type === 'a' ? 'selected' : ''}>A类</option>
-                    <option value="b" ${v.type === 'b' ? 'selected' : ''}>B类</option>
-                </select>
-            </div>
-            <div class="variable-actions">
-                <button onclick="removeVariable(this)">删除</button>
-                <button onclick="calculateVariableStats(this)">计算统计量</button>
-            </div>
-        `;
-        
-        document.getElementById('variables-container').appendChild(varDiv);
-        
-        // 自动计算统计量
-        setTimeout(() => {
-            calculateVariableStats(varDiv.querySelector('.variable-actions button:last-child'));
-        }, 100);
-    });
+        const variables = [
+            {
+                name: 'm',
+                data: '0.050, 0.100, 0.150, 0.200, 0.250',
+                precision: '0.0001',
+                unit: 'kg',
+                type: 'b'
+            },
+            {
+                name: 'y',
+                data: '0.52, 1.05, 1.58, 2.10, 2.63',
+                precision: '0.01',
+                unit: 'mm',
+                type: 'b'
+            },
+            {
+                name: 'd',
+                data: '0.35',
+                precision: '0.01',
+                unit: 'mm',
+                type: 'b'
+            },
+            {
+                name: 'D',
+                data: '25.00',
+                precision: '0.02',
+                unit: 'mm',
+                type: 'b'
+            },
+            {
+                name: 'L',
+                data: '800',
+                precision: '1',
+                unit: 'mm',
+                type: 'b'
+            }
+        ];
 
-    // 更新变量选择下拉框
-    updateVariableSelects();
-
-    // 添加计算公式
-    const formulaInput = document.getElementById('formula');
-    if (formulaInput) {
-        formulaInput.value = `
-            // 单位转换
-            L_m = L/1000;    // mm -> m
-            d_m = d/1000;    // mm -> m
-            D_m = D/1000;    // mm -> m
+        // 初始化变量
+        for (const v of variables) {
+            addVariable();
+            const rows = document.querySelectorAll('.variable-row');
+            const lastRow = rows[rows.length - 1];
             
-            // 杨氏模量计算
-            E = (4 * m * 9.794 * L_m^3)/(pi * d_m^2 * D_m^2)
-        `.trim();
+            lastRow.querySelector('.var-name').value = v.name;
+            lastRow.querySelector('.var-data').value = v.data;
+            lastRow.querySelector('.var-precision').value = v.precision;
+            lastRow.querySelector('.var-unit').value = v.unit;
+            lastRow.querySelector('.uncertainty-type').value = v.type;
+            
+            // 计算并等待统计量计算完成
+            const calcButton = lastRow.querySelector('button[onclick="calculateVariableStats(this)"]');
+            calculateVariableStats(calcButton);
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+
+        // 设置计算公式
+        const formulaInput = document.getElementById('formula');
+        formulaInput.value = `L_m = L/1000;
+d_m = d/1000;
+D_m = D/1000;
+E = (4 * m * 9.794 * (L_m^3))/(pi * (d_m^2) * (D_m^2))`;
+
+        // 等待一会儿确保所有变量都已准备好
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        // 执行计算
+        calculateResult();
+
+        // 更新图表
+        updatePlot();
+
+    } catch (error) {
+        console.error('加载示例数据时出错:', error);
+        document.getElementById('results-container').innerHTML = `
+            <p class="error">加载示例数据时出错: ${error.message}</p>
+        `;
     }
-
-    // 添加实验分析说明
-    const analysisDiv = document.createElement('div');
-    analysisDiv.className = 'analysis-section';
-    analysisDiv.innerHTML = `
-        <h4>杨氏模量计算与不确定度分析</h4>
-        <div class="analysis-content">
-            <div class="calculation-step">
-                <h5>1. 基本公式</h5>
-                <p class="formula">E = (4mgL³)/(πd²D²)</p>
-                <p>其中：</p>
-                <ul>
-                    <li>E - 杨氏模量 (Pa)</li>
-                    <li>m - 砝码质量 (kg)</li>
-                    <li>g - 重力加速度 (9.794 m/s²)</li>
-                    <li>L - 金属丝长度 (m)</li>
-                    <li>d - 金属丝直径 (m)</li>
-                    <li>D - 圆筒直径 (m)</li>
-                </ul>
-            </div>
-
-            <div class="calculation-step">
-                <h5>2. 不确定度传递</h5>
-                <p>根据不确定度传递公式：</p>
-                <p class="formula">
-                    (ΔE/E)² = (Δm/m)² + (3ΔL/L)² + (4Δd/d)² + (4ΔD/D)²
-                </p>
-                <p>各项说明：</p>
-                <ul>
-                    <li>(Δm/m)² - 质量的相对不确定度贡献</li>
-                    <li>(3ΔL/L)² - 长度的相对不确定度贡献（三次方导致系数为3）</li>
-                    <li>(4Δd/d)² - 金属丝直径的相对不确定度贡献（平方导致系数为4）</li>
-                    <li>(4ΔD/D)² - 圆筒直径的相对不确定度贡献（平方导致系数为4）</li>
-                </ul>
-            </div>
-
-            <div class="calculation-step">
-                <h5>3. 计算步骤</h5>
-                <ol>
-                    <li>将所有长度单位从mm转换为m</li>
-                    <li>计算各变量的相对不确定度</li>
-                    <li>代入不确定度传递公式计算总的相对不确定度</li>
-                    <li>计算杨氏模量E及其不确定度ΔE</li>
-                    <li>根据修约规则得到最终结果</li>
-                </ol>
-            </div>
-        </div>
-    `;
-    
-    const resultsContainer = document.getElementById('results-container');
-    if (resultsContainer) {
-        resultsContainer.innerHTML = '';
-        resultsContainer.appendChild(analysisDiv);
-    }
-
-    // 自动计算结果
-    setTimeout(calculateResult, 200);
 }
 
 // 更新图表函数
@@ -523,6 +446,7 @@ function updatePlot() {
         const xVar = row.querySelector('.x-axis').value;
         const yVar = row.querySelector('.y-axis').value;
         const showFit = row.querySelector('.show-fit').checked;
+        const fitType = row.querySelector('.fit-type').value;
 
         // 获取数据
         const xRow = Array.from(document.querySelectorAll('.variable-row'))
@@ -558,24 +482,163 @@ function updatePlot() {
 
             // 如果需要显示拟合线
             if (showFit && xData.length > 1) {
-                // 线性拟合
-                const { slope, intercept, correlation } = linearFit(xData, yData);
-                
-                // 生成拟合线数据点
-                const xFit = [Math.min(...xData), Math.max(...xData)];
-                const yFit = xFit.map(x => slope * x + intercept);
+                const fitResult = applyFit(xData, yData, fitType);
+                // 生成拟合线
+                let fitTrace;
+                if (fitType === 'polynomial') {
+                    const xFit = [];
+                    const yFit = [];
+                    const step = (Math.max(...xData) - Math.min(...xData)) / 100;
+                    for (let x = Math.min(...xData); x <= Math.max(...xData); x += step) {
+                        xFit.push(x);
+                        yFit.push(fitResult.coefficients.reduce((sum, coef, i) => 
+                            sum + coef * Math.pow(x, i), 0));
+                    }
+                    fitTrace = {
+                        x: xFit,
+                        y: yFit,
+                        mode: 'lines',
+                        type: 'scatter',
+                        name: `多项式拟合`,
+                        line: { color: 'red' }
+                    };
+                } else {
+                    // 现有的拟合线代码
+            varDiv.className = 'variable-row';
+            
+            varDiv.innerHTML = `
+                <input type="text" placeholder="变量名" class="var-name" value="${v.name}">
+                <textarea class="var-data" placeholder="输入多组数据，用逗号或空格分隔">${v.data}</textarea>
+                <input type="number" placeholder="仪器精度" class="var-precision" step="any" value="${v.precision}">
+                <input type="text" placeholder="单位" class="var-unit" value="${v.unit}">
+                <div class="uncertainty-controls">
+                    <select class="uncertainty-type">
+                        <option value="a" ${v.type === 'a' ? 'selected' : ''}>A类</option>
+                        <option value="b" ${v.type === 'b' ? 'selected' : ''}>B类</option>
+                    </select>
+                </div>
+                <div class="variable-actions">
+                    <button onclick="removeVariable(this)">删除</button>
+                    <button onclick="calculateVariableStats(this)">计算统计量</button>
+                </div>
+            `;
+            
+            document.getElementById('variables-container').appendChild(varDiv);
+            
+            // 计算统计量并等待完成
+            await new Promise(resolve => {
+                const calcButton = varDiv.querySelector('.variable-actions button:last-child');
+                calcButton.click();
+                setTimeout(resolve, 100);
+            });
+        }
+        
+        // 更新变量选择
+        updateVariableSelects();
+        
+        // 设置计算公式
+        const formulaInput = document.getElementById('formula');
+        formulaInput.value = `L_m = L/1000;
+d_m = d/1000;
+D_m = D/1000;
+E = (4 * m * 9.794 * (L_m^3))/(pi * (d_m^2) * (D_m^2))`;
+        
+        // 等待所有数据准备完成后计算结果
+        setTimeout(calculateResult, 500);
+    };
 
-                const fitTrace = {
-                    x: xFit,
-                    y: yFit,
-                    mode: 'lines',
-                    type: 'scatter',
-                    name: `拟合线: ${yVar} = (${slope.toFixed(4)})${xVar} + (${intercept.toFixed(4)})`,
-                    line: { color: 'red' }
-                };
+    // 执行初始化
+    initializeVariables().catch(error => {
+        console.error('初始化变量时出错:', error);
+    });
+}
+
+// 更新图表函数
+function updatePlot() {
+    const showErrorBars = document.getElementById('show-error-bars').checked;
+    const autoRange = document.getElementById('auto-range').checked;
+    const traces = [];
+
+    document.querySelectorAll('.curve-row').forEach(row => {
+        const xVar = row.querySelector('.x-axis').value;
+        const yVar = row.querySelector('.y-axis').value;
+        const showFit = row.querySelector('.show-fit').checked;
+        const fitType = row.querySelector('.fit-type').value;
+
+        // 获取数据
+        const xRow = Array.from(document.querySelectorAll('.variable-row'))
+            .find(r => r.querySelector('.var-name').value === xVar);
+        const yRow = Array.from(document.querySelectorAll('.variable-row'))
+            .find(r => r.querySelector('.var-name').value === yVar);
+
+        if (xRow && yRow) {
+            const xData = xRow.querySelector('.var-data').value.split(/[,\s]+/).map(Number);
+            const yData = yRow.querySelector('.var-data').value.split(/[,\s]+/).map(Number);
+            const xStats = JSON.parse(xRow.dataset.stats || '{}');
+            const yStats = JSON.parse(yRow.dataset.stats || '{}');
+
+            // 创建数据点轨迹
+            const dataTrace = {
+                x: xData,
+                y: yData,
+                error_x: {
+                    type: 'data',
+                    array: Array(xData.length).fill(xStats.uncertainty || 0),
+                    visible: showErrorBars
+                },
+                error_y: {
+                    type: 'data',
+                    array: Array(yData.length).fill(yStats.uncertainty || 0),
+                    visible: showErrorBars
+                },
+                mode: 'markers',
+                type: 'scatter',
+                name: `${yVar} vs ${xVar} (数据点)`
+            };
+            traces.push(dataTrace);
+
+            // 如果需要显示拟合线
+            if (showFit && xData.length > 1) {
+                const fitResult = applyFit(xData, yData, fitType);
+                // 生成拟合线
+                let fitTrace;
+                if (fitType === 'polynomial') {
+                    const xFit = [];
+                    const yFit = [];
+                    const step = (Math.max(...xData) - Math.min(...xData)) / 100;
+                    for (let x = Math.min(...xData); x <= Math.max(...xData); x += step) {
+                        xFit.push(x);
+                        yFit.push(fitResult.coefficients.reduce((sum, coef, i) => 
+                            sum + coef * Math.pow(x, i), 0));
+                    }
+                    fitTrace = {
+                        x: xFit,
+                        y: yFit,
+                        mode: 'lines',
+                        type: 'scatter',
+                        name: `多项式拟合`,
+                        line: { color: 'red' }
+                    };
+                } else {
+                    // 现有的拟合线代码
+                    const { slope, intercept, correlation } = linearFit(xData, yData);
+                
+                    // 生成拟合线数据点
+                    const xFit = [Math.min(...xData), Math.max(...xData)];
+                    const yFit = xFit.map(x => slope * x + intercept);
+
+                    fitTrace = {
+                        x: xFit,
+                        y: yFit,
+                        mode: 'lines',
+                        type: 'scatter',
+                        name: `拟合线: ${yVar} = (${slope.toFixed(4)})${xVar} + (${intercept.toFixed(4)})`,
+                        line: { color: 'red' }
+                    };
+                }
                 traces.push(fitTrace);
 
-                // 存储拟合参数供后续使用
+                // ���储拟合参数供后续使用
                 window.fitParameters = {
                     slope,
                     intercept,
@@ -650,8 +713,9 @@ function extractVariables(formula) {
         .replace(/\/\*[\s\S]*?\*\//g, '')  // 移除多行注释
         .replace(/\s+/g, '');  // 移除空格
     
-    // 移除常见数学函数名和常量
-    const noFunctions = cleanFormula.replace(/sqrt|sin|cos|tan|exp|log|pi|e|abs/g, '');
+    // 替换 'π' 为 'pi'
+    const normalizedFormula = cleanFormula.replace(/π/g, 'pi');
+    
     
     // 移除数字（包括科学记数法）
     const noNumbers = noFunctions.replace(/[0-9]+\.?[0-9]*([eE][-+]?[0-9]+)?/g, '');
@@ -683,7 +747,7 @@ function generateUncertaintyFormula() {
         // 检查是否是赋值表达式
         const assignmentMatch = mainExpr.match(/(\w+)\s*=\s*(.+)/);
         if (!assignmentMatch) {
-            throw new Error('最后一个表达式必须是赋值形式（例如：E = ...）');
+            throw new Error('最后一个表达式必���是赋值形式（例如：E = ...）');
         }
         
         const resultVariable = assignmentMatch[1];
@@ -826,7 +890,7 @@ function importData(event) {
                 const varDiv = document.createElement('div');
                 varDiv.className = 'variable-row';
                 varDiv.innerHTML = `
-                    <input type="text" placeholder="变量名" class="var-name" value="${v.name}">
+                    <input type="text" placeholder="变量名" class="var-name" value="${v.name}" oninput="validateVariableName(this)">
                     <textarea class="var-data" placeholder="输入多组数据，用逗号或空格分隔">${v.data}</textarea>
                     <input type="number" placeholder="仪器精度" class="var-precision" step="any" value="${v.precision}">
                     <input type="text" placeholder="单位" class="var-unit" value="${v.unit}">
@@ -905,7 +969,7 @@ const UnitConverter = {
     pressure: {
         Pa: 1,        // 帕斯卡（基准单位）
         kPa: 1000,    // 千帕到帕斯卡
-        MPa: 1000000, // 兆帕到帕斯卡
+        MPa: 1000000, // 兆���到帕斯卡
         atm: 101325   // 标准大气压到帕斯卡
     },
 
@@ -923,7 +987,7 @@ const UnitConverter = {
 // 改进不确定度计算函数
 function calculateUncertainty(data, type, params = {}) {
     if (type === 'a') {
-        // A��不确定度计算
+        // A类不确定度计算
         const n = data.length;
         if (n < 2) throw new Error('A类不确定度需要至少2个数据点');
         
@@ -968,7 +1032,7 @@ const FittingModels = {
     
     // 幂函数拟合 y = ax^b
     power(xData, yData) {
-        // 取对数转换为线性拟合
+        // ����数转换为线性拟合
         const logX = xData.map(x => Math.log(x));
         const logY = yData.map(y => Math.log(y));
         const { slope, intercept } = linearFit(logX, logY);
@@ -1013,4 +1077,609 @@ const FittingModels = {
             degree
         };
     }
-}; 
+};
+
+// 计算B类不确定度
+function calculateTypeBUncertainty() {
+    const precision = parseFloat(document.getElementById('instrument-precision').value);
+    const confidenceLevel = parseFloat(document.getElementById('confidence-level').value);
+    if (isNaN(precision)) {
+        alert('请输入有效的仪器精度');
+        return;
+    }
+    const uncertainty = precision / Math.sqrt(3);
+    document.getElementById('uncertainty-results').innerHTML = `
+        <div class="result-item">
+            <p>仪器精度：${precision}</p>
+            <p>置信概率：${confidenceLevel}</p>
+            <p>不确定度：${uncertainty.toFixed(6)}</p>
+        </div>
+    `;
+}
+
+// 添加曲线功能
+function addCurve() {
+    const container = document.getElementById('curves-container');
+    const curveDiv = document.createElement('div');
+    curveDiv.className = 'curve-row';
+    
+    curveDiv.innerHTML = `
+        <select class="x-axis"></select>
+        <select class="y-axis"></select>
+        <select class="fit-type">
+            <option value="linear">线性拟合</option>
+            <option value="power">幂函数拟合</option>
+            <option value="exponential">指数函数拟合</option>
+            <option value="polynomial">多项式拟合</option>
+        </select>
+        <label><input type="checkbox" class="show-fit" checked> 显示拟合</label>
+        <button onclick="removeCurve(this)">删除</button>
+    `;
+    
+    container.appendChild(curveDiv);
+    updateVariableSelects();
+}
+
+function removeCurve(button) {
+    const row = button.closest('.curve-row');
+    if (row) {
+        row.remove();
+        updatePlot();
+    }
+}
+
+// 计算A类不确定度
+function calculateTypeAUncertainty() {
+    const dataText = document.getElementById('measurements').value;
+    const data = dataText.split(/[,\s]+/).map(Number).filter(x => !isNaN(x));
+    
+    if (data.length < 2) {
+        alert('A类不确定�����需要至少2个数据点');
+        return;
+    }
+
+    const result = calculateUncertainty(data, 'a');
+    
+    document.getElementById('uncertainty-results').innerHTML = `
+        <div class="result-item">
+            <p>平均值：${result.mean.toFixed(6)}</p>
+            <p>标准差：${result.standardDeviation.toFixed(6)}</p>
+            <p>标准不确定度：${result.uncertainty.toFixed(6)}</p>
+            <p>相对不确定��：${result.relativeUncertainty.toFixed(2)}%</p>
+        </div>
+    `;
+}
+
+// 应用拟合
+function applyFit(xData, yData, fitType) {
+    switch (fitType) {
+        case 'linear':
+            return FittingModels.linear(xData, yData);
+        case 'power':
+            return FittingModels.power(xData, yData);
+        case 'exponential':
+            return FittingModels.exponential(xData, yData);
+        case 'polynomial':
+            return FittingModels.polynomial(xData, yData, 2);
+        default:
+            return FittingModels.linear(xData, yData);
+    }
+}
+
+// 添加单位转换功能界面
+function showUnitConverter() {
+    const converterDiv = document.createElement('div');
+    converterDiv.className = 'unit-converter';
+    converterDiv.innerHTML = `
+        <h3>单位转换</h3>
+        <div class="converter-controls">
+            <select id="unit-type">
+                <option value="length">长度</option>
+                <option value="mass">质量</option>
+                <option value="time">时间</option>
+                <option value="force">力</option>
+                <option value="pressure">压力</option>
+            </select>
+            <input type="number" id="unit-value" step="any">
+            <select id="from-unit"></select>
+            <span>→</span>
+            <select id="to-unit"></select>
+            <button onclick="convertUnit()">转换</button>
+        </div>
+        <div id="conversion-result"></div>
+    `;
+    
+    document.getElementById('results-container').appendChild(converterDiv);
+    updateUnitSelects();
+}
+
+function updateUnitSelects() {
+    const type = document.getElementById('unit-type').value;
+    const units = Object.keys(UnitConverter[type]);
+    const fromSelect = document.getElementById('from-unit');
+    const toSelect = document.getElementById('to-unit');
+    
+    [fromSelect, toSelect].forEach(select => {
+        select.innerHTML = units.map(unit => 
+            `<option value="${unit}">${unit}</option>`
+        ).join('');
+    });
+}
+
+function convertUnit() {
+    const type = document.getElementById('unit-type').value;
+    const value = parseFloat(document.getElementById('unit-value').value);
+    const fromUnit = document.getElementById('from-unit').value;
+    const toUnit = document.getElementById('to-unit').value;
+    
+    try {
+        const result = UnitConverter.convert(value, fromUnit, toUnit, type);
+        document.getElementById('conversion-result').innerHTML = `
+            <p>${value} ${fromUnit} = ${result.toFixed(6)} ${toUnit}</p>
+        `;
+    } catch (error) {
+        document.getElementById('conversion-result').innerHTML = `
+            <p style="color: red;">转换错误：${error.message}</p>
+        `;
+    }
+}
+
+// 添加自动不确定度分析功能
+const UncertaintyAnalyzer = {
+    // 解析表达式并提取变量及其关系
+    parseExpression(expr) {
+        const parsedExpr = math.parse(expr);
+        return {
+            variables: this.extractVariables(parsedExpr),
+            derivatives: this.calculateDerivatives(parsedExpr)
+        };
+    },
+
+    // 提取表达式中的变量
+    extractVariables(expr) {
+        const variables = new Set();
+        expr.traverse(node => {
+            if (node.type === 'SymbolNode' && !['pi', 'e'].includes(node.name)) {
+                variables.add(node.name);
+            }
+        });
+        return Array.from(variables);
+    },
+
+    // 计算所有变量的偏导数
+    calculateDerivatives(expr) {
+        const variables = this.extractVariables(expr);
+        const derivatives = {};
+        
+        variables.forEach(variable => {
+            try {
+                derivatives[variable] = math.derivative(expr, variable);
+            } catch (e) {
+                console.warn(`无法计算变量 ${variable} 的偏导数:`, e);
+            }
+        });
+        
+        return derivatives;
+    },
+
+    // 生成不确定度传递公式
+    generateUncertaintyFormula(expr, result) {
+        const { variables, derivatives } = this.parseExpression(expr);
+        let formula = '标准不确定度传递公式：\n\n';
+        
+        // 生成各变量的偏导数表达式
+        variables.forEach(variable => {
+            formula += `∂${result}/∂${variable} = ${derivatives[variable]}\n`;
+        });
+        
+        // 生成合成标准不确定度公式
+        formula += '\n合成标准不确定度：\n';
+        formula += `Δ${result} = ���(${variables.map(v => 
+            `(∂${result}/∂${v})²·(Δ${v})²`
+        ).join(' + ')})\n`;
+        
+        // 生成相对不确定度公式
+        formula += '\n相对不确定度：\n';
+        formula += `(Δ${result}/${result}) = √(${variables.map(v => 
+            `((∂${result}/∂${v})·${v}/${result})²·(Δ${v}/${v})²`
+        ).join(' + ')})`;
+        
+        return formula;
+    },
+
+    // 计算不确定度
+    calculateUncertainty(expr, variables, uncertainties) {
+        const { derivatives } = this.parseExpression(expr);
+        let sumSquares = 0;
+        
+        // 计算每个变量的不确定度贡献
+        for (const [variable, value] of Object.entries(variables)) {
+            if (uncertainties[variable]) {
+                try {
+                    const derivative = derivatives[variable];
+                    const contribution = math.evaluate(
+                        `(${derivative.toString()})^2 * (${uncertainties[variable]})^2`,
+                        variables
+                    );
+                    sumSquares += contribution;
+                } catch (e) {
+                    console.warn(`计算变量 ${variable} 的不确定度贡献时出错:`, e);
+                }
+            }
+        }
+        
+        return Math.sqrt(sumSquares);
+    }
+};
+
+// 修改计算结果函数中的不确定度计算部分
+function calculateResult() {
+    const formula = document.getElementById('formula').value.trim(); // 添加trim()去除空白字符
+    const resultsContainer = document.getElementById('results-container');
+    
+    try {
+        console.log('���始计算，公式：', formula);
+        
+        // 检查公式是否为空
+        if (!formula) {
+            throw new Error('请输入计算公式');
+        }
+
+        // 收集变量数据
+        const variables = { pi: Math.PI, e: Math.E };
+        const uncertainties = {};
+        const variableData = {};
+        
+        // 收集所有变量的值和不确定度
+        document.querySelectorAll('.variable-row').forEach(row => {
+            const name = row.querySelector('.var-name').value.trim();
+            if (!name) return;
+            
+            try {
+                const stats = JSON.parse(row.dataset.stats || '{}');
+                console.log(`变量 ${name} 的统计数据:`, stats);
+                
+                if (stats.mean !== undefined) {
+                    variables[name] = stats.mean;
+                    uncertainties[name] = stats.uncertainty;
+                    variableData[name] = {
+                        mean: stats.mean,
+                        uncertainty: stats.uncertainty,
+                        unit: stats.unit
+                    };
+                }
+            } catch (e) {
+                console.warn(`解析变量 ${name} 的统计数据时出错:`, e);
+            }
+        });
+        
+        console.log('收集到的变量:', variables);
+        console.log('收集到的不确定度:', uncertainties);
+
+        // 分割并处理表达式
+        const expressions = formula.split(';')
+            .map(expr => expr.trim())
+            .filter(expr => expr);
+        
+        console.log('处理的表达式:', expressions);
+
+        // 依次执行表达式
+        let result;
+        for (const expr of expressions) {
+            try {
+                console.log('正在计算表达式:', expr);
+                result = math.evaluate(expr, variables);
+                
+                // 更新变量值
+                const assignMatch = expr.match(/(\w+)\s*=/);
+                if (assignMatch) {
+                    const varName = assignMatch[1];
+                    variables[varName] = result;
+                    console.log(`更新变量 ${varName} = ${result}`);
+                }
+            } catch (e) {
+                throw new Error(`计算表达式 "${expr}" 时出错: ${e.message}`);
+            }
+        }
+
+        // 计算不确定度传���
+        const mainExpr = expressions[expressions.length - 1];
+        const parsedFormula = math.parse(mainExpr.split('=')[1]);
+        let sumSquares = 0;
+        
+        // 显示不确定度传递计算过程
+        const uncertaintyStep = document.createElement('div');
+        uncertaintyStep.className = 'step';
+        uncertaintyStep.innerHTML = '<h5>3. 不确定度传递计算</h5>';
+        
+        for (const [name, value] of Object.entries(variables)) {
+            if (uncertainties[name]) {
+                try {
+                    const derivative = math.derivative(parsedFormula, name);
+                    const contribution = math.evaluate(
+                        `(${derivative.toString()})^2 * (${uncertainties[name]})^2`,
+                        variables
+                    );
+                    sumSquares += contribution;
+                    
+                    uncertaintyStep.innerHTML += `
+                        <div class="uncertainty-contribution">
+                            <p>∂E/∂${name} = ${derivative.toString()}</p>
+                            <p>${name}的不确定度贡献：${Math.sqrt(contribution).toFixed(6)}</p>
+                        </div>
+                    `;
+                } catch (e) {
+                    console.log(`跳过变量 ${name} 的不确定度计算: ${e.message}`);
+                }
+            }
+        }
+        calculationSteps.appendChild(uncertaintyStep);
+
+        // 计算最终结果
+        const uncertainty = Math.sqrt(sumSquares);
+        const relativeUncertainty = (uncertainty / Math.abs(result)) * 100;
+        const expandedUncertainty = 2 * uncertainty;
+        const relativeExpandedUncertainty = 2 * relativeUncertainty;
+
+        // 显示初步结果
+        const resultStep = document.createElement('div');
+        resultStep.className = 'step';
+        resultStep.innerHTML = `
+            <h5>4. 计算结果</h5>
+            <p>计算值：${result.toFixed(6)} Pa</p>
+            <p>标准不确定度：${uncertainty.toFixed(6)} Pa</p>
+            <p>相对标准不确定度：${relativeUncertainty.toFixed(2)}%</p>
+            <p>扩展不确定度(k=2)：${expandedUncertainty.toFixed(6)} Pa</p>
+            <p>相对扩展不确定度：${relativeExpandedUncertainty.toFixed(2)}%</p>
+        `;
+        calculationSteps.appendChild(resultStep);
+
+        // 添加修约过程
+        const finalResult = RoundingRules.formatFinalResult(result, expandedUncertainty, 'Pa');
+        const roundingStep = document.createElement('div');
+        roundingStep.className = 'step';
+        roundingStep.innerHTML = `
+            <h5>5. 结果修约</h5>
+            <div class="rounding-process">
+                <p>修约规则：</p>
+                <ol>
+                    <li>不确定度修约为一位或两位有效数字：
+                        <ul>
+                            <li>当第一位数字为12时，保留两位有效数字</li>
+                            <li>当第一位数字大于2时，保留一位有效数字</li>
+                        </ul>
+                    </li>
+                    <li>测量结果的末位与不确定度的末位对齐</li>
+                </ol>
+                
+                <p>修约过程：</p>
+                <ol>
+                    <li>原始不确定度：${expandedUncertainty.toFixed(6)} Pa</li>
+                    <li>修约后的不确定度：${finalResult.uncertainty} Pa</li>
+                    <li>原始测量值：${result.toFixed(6)} Pa</li>
+                    <li>修约后的测量值：${finalResult.value} Pa</li>
+                </ol>
+
+                <p class="final-result">最终结果：${finalResult.formatted}</p>
+                <p class="relative-uncertainty">相对扩展不确定度：${RoundingRules.roundToDecimalPlaces(relativeExpandedUncertainty, 1)}%</p>
+            </div>
+        `;
+        calculationSteps.appendChild(roundingStep);
+
+    } catch (error) {
+        console.error('计算过程出错:', error);
+        resultsContainer.innerHTML = `
+            <p style="color: red;">计算错误：${error.message}</p>
+            <p>请检查以下内容：</p>
+            <ul>
+                <li>所有变量是否已正确计算统计量</li>
+                <li>公式格式是否正确（每个表达式用分号分隔）</li>
+                <li>变量名是否与输入匹配</li>
+                <li>数学运算符是否使用正确</li>
+            </ul>
+            <p>当前公式：</p>
+            <pre>${formula}</pre>
+            <p>当前变量：</p>
+            <pre>${JSON.stringify(variables, null, 2)}</pre>
+        `;
+    }
+}
+
+// 不确定度类型切换处理
+document.addEventListener('DOMContentLoaded', () => {
+    // ...existing code...
+
+    // 添加不确定度类型切换事件监听
+    document.querySelectorAll('input[name="uncertainty-type"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            const typeA = document.getElementById('type-a-input');
+            const typeB = document.getElementById('type-b-input');
+            if (this.value === 'a') {
+                typeA.style.display = 'block';
+                typeB.style.display = 'none';
+            } else {
+                typeA.style.display = 'none';
+                typeB.style.display = 'block';
+            }
+        });
+    });
+});
+
+// 计算A类不确定度
+function calculateTypeAUncertainty() {
+    const dataText = document.getElementById('measurements').value;
+    const data = dataText.split(/[,\s]+/).map(Number).filter(x => !isNaN(x));
+    
+    if (data.length < 2) {
+        alert('A类不确定度需要至少2个数据点');
+        return;
+    }
+
+    // 计算平均值
+    const mean = data.reduce((a, b) => a + b) / data.length;
+    
+    // 计算标准差
+    const variance = data.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / (data.length - 1);
+    const standardDeviation = Math.sqrt(variance);
+    
+    // 计算标准不确定度
+    const uncertainty = standardDeviation / Math.sqrt(data.length);
+    
+    // 计算相对不确定�������
+    const relativeUncertainty = (uncertainty / Math.abs(mean)) * 100;
+
+    // 显示结果
+    document.getElementById('uncertainty-results').innerHTML = `
+        <div class="result-item">
+            <h4>A类不确定度计算结果</h4>
+            <p>数据点数：${data.length}</p>
+            <p>平均值：${mean.toFixed(6)}</p>
+            <p>标准差：${standardDeviation.toFixed(6)}</p>
+            <p>标准不确定度：${uncertainty.toFixed(6)}</p>
+            <p>相对不确定度：${relativeUncertainty.toFixed(2)}%</p>
+        </div>
+    `;
+}
+
+// 计算B类不确定度
+function calculateTypeBUncertainty() {
+    const precision = parseFloat(document.getElementById('instrument-precision').value);
+    const confidenceLevel = parseFloat(document.getElementById('confidence-level').value);
+    
+    if (isNaN(precision)) {
+        alert('请输入有效的仪器精度值');
+        return;
+    }
+
+    // 计算标准不确定度
+    const uncertainty = precision / (Math.sqrt(3));
+    
+    // 显示结果
+    document.getElementById('uncertainty-results').innerHTML = `
+        <div class="result-item">
+            <h4>B类不确定度计算结果</h4>
+            <p>仪器精度：${precision}</p>
+            <p>置信概率：${(confidenceLevel * 100).toFixed(2)}%</p>
+            <p>标准不确定度：${uncertainty.toFixed(6)}</p>
+        </div>
+    `;
+}
+
+// ...existing code...
+
+// 添加不确定度类型切换函数
+function toggleUncertaintyType(type) {
+    document.getElementById('type-a-input').style.display = type === 'a' ? 'block' : 'none';
+    document.getElementById('type-b-input').style.display = type === 'b' ? 'block' : 'none';
+}
+
+// 计算A类不确定度
+function calculateUncertaintyA() {
+    const dataText = document.getElementById('measurements').value;
+    const data = dataText.split(/[,\s]+/).map(Number).filter(x => !isNaN(x));
+    
+    if (data.length < 2) {
+        alert('A类不确定度需要至少2个数据点');
+        return;
+    }
+
+    // 计算��均值
+    const mean = data.reduce((a, b) => a + b) / data.length;
+    
+    // 计算标准差
+    const variance = data.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / (data.length - 1);
+    const standardDeviation = Math.sqrt(variance);
+    
+    // 计算标准不确定度
+    const uncertainty = standardDeviation / Math.sqrt(data.length);
+    
+    // 计算相对不确定度
+    const relativeUncertainty = (uncertainty / Math.abs(mean)) * 100;
+
+    // 显示结果
+    document.getElementById('uncertainty-results').innerHTML = `
+        <div class="result-item">
+            <h4>A类不确定度计算结果</h4>
+            <p>数据点数：${data.length}</p>
+            <p>平均值：${mean.toFixed(6)}</p>
+            <p>标准差：${standardDeviation.toFixed(6)}</p>
+            <p>标准不确定度：${uncertainty.toFixed(6)}</p>
+            <p>相对不确定度：${relativeUncertainty.toFixed(2)}%</p>
+        </div>
+    `;
+}
+
+// 计算B类不确定度
+function calculateUncertaintyB() {
+    const precision = parseFloat(document.getElementById('instrument-precision').value);
+    const confidenceLevel = parseFloat(document.getElementById('confidence-level').value);
+    
+    if (isNaN(precision)) {
+        alert('请输入有效的仪器精度值');
+        return;
+    }
+
+    // 计算标准不确定度
+    const uncertainty = precision / Math.sqrt(3);
+    
+    // 显示结果
+    document.getElementById('uncertainty-results').innerHTML = `
+        <div class="result-item">
+            <h4>B类不确定度计算结果</h4>
+            <p>仪器精度：${precision}</p>
+            <p>置信概率：${(confidenceLevel * 100).toFixed(2)}%</p>
+            <p>标准不确定度：${uncertainty.toFixed(6)}</p>
+            <p>扩展不确定度(k=2)：${(2 * uncertainty).toFixed(6)}</p>
+        </div>
+    `;
+}
+
+// 添加到页面加载事件
+document.addEventListener('DOMContentLoaded', () => {
+    // ...existing code...
+    
+    // 初始化不确定度计算区域
+    toggleUncertaintyType('a');
+});
+
+// ...existing code...
+
+// 移除重复的 calculateTypeAUncertainty 和 calculateTypeBUncertainty 函数
+// 保留 calculateUncertaintyA 和 calculateUncertaintyB 函数
+
+// 移除重复的 calculateResult 函数定义，确保只有一个版本存在
+
+// 合并多个 DOMContentLoaded 事��监听器
+document.addEventListener('DOMContentLoaded', () => {
+    // ...existing initialization code...
+
+    // 添加自动范围切换事件监听
+    const autoRangeCheckbox = document.getElementById('auto-range');
+    if (autoRangeCheckbox) {
+        autoRangeCheckbox.addEventListener('change', () => {
+            document.querySelector('.axis-range').style.display = autoRangeCheckbox.checked ? 'none' : 'block';
+        });
+    }
+
+    // 添加图表相关的事件监听器
+    document.querySelectorAll('#show-error-bars, #auto-range').forEach(checkbox => {
+        checkbox.addEventListener('change', updatePlot);
+    });
+
+    // 添加单位转换相关事件监听器
+    document.getElementById('unit-type').addEventListener('change', updateUnitSelects);
+    document.getElementById('from-unit').addEventListener('change', () => {});    document.getElementById('to-unit').addEventListener('change', () => {});    // 初始化不确定度计算区域    toggleUncertaintyType('a');    // 初始化示例数据加载    addVariable();});// ...existing code...// 保证 extractVariables 函数可供 UncertaintyAnalyzer 使用// 完善 UncertaintyAnalyzer 以计算不确定度const UncertaintyAnalyzer = {    calculateUncertainties(formula, scope) {        const variables = extractVariables(formula);        const uncertainties = {};        // 收集各变量的不确定度        variables.forEach(varName => {            const row = Array.from(document.getElementsByClassName('variable-row'))                .find(r => r.querySelector('.var-name').value === varName);            if (row && row.dataset.stats) {                const stats = JSON.parse(row.dataset.stats);                uncertainties[varName] = stats.uncertainty;            }        });        // 使用数学库计算偏导数并进行不确定度传播        const node = math.parse(formula.split('\n').pop()); // 获取最后一个表达式        const code = node.compile();        const result = code.evaluate(scope);        // 假设结果变量为 E        const partials = {};        variables.forEach(varName => {            partials[varName] = math.derivative(formula.split('\n').pop(), varName).evaluate(scope);        });        // 计算总不确定度        let totalUncertaintySquared = 0;        Object.keys(partials).forEach(varName => {            if (uncertainties[varName] !== undefined) {                totalUncertaintySquared += Math.pow(partials[varName] * uncertainties[varName], 2);            }        });        const totalUncertainty = Math.sqrt(totalUncertaintySquared);        return { E: totalUncertainty };    }}// 修��� calculateResult 函数以自动计算不确定度function calculateResult() {    const formula = document.getElementById('formula').value.trim();    const resultsContainer = document.getElementById('results-container');        if (!formula) {        resultsContainer.innerHTML = '<p class="error">请填写公式。</p>';        return;    }    try {        // 分割多个表达式        const expressions = formula.split(';');        const scope = {};        expressions.forEach(expr => {            if (expr.trim()) {                const node = math.parse(expr);                const code = node.compile();                const result = code.evaluate(scope);                // Store result in scope            }        });        // 计算不确定度        const uncertaintyResults = UncertaintyAnalyzer.calculateUncertainties(formula, scope);        // 显示结果        if (scope.E !== undefined) {            const E = RoundingRules.roundValue(scope.E, uncertaintyResults.E);            const uncertainty = RoundingRules.roundUncertainty(uncertaintyResults.E);            resultsContainer.innerHTML = `<p class="success">公式计算成功。E = ${E} ${getUnit('E')} ± ${uncertainty} ${getUnit('E')}</p>`;        } else {            resultsContainer.innerHTML = '<p class="error">计��成功，但未找到结果变量 E。</p>';        }    } catch (error) {        resultsContainer.innerHTML = `<p class="error">计算错误：${error.message}</p>`;    }}// ...existing code...function extractVariables(expr) {    // 移除所有空格和注释    const cleanFormula = expr.replace(/\/\/.*$/gm, '')  // 移除单行注释        .replace(/\/\*[\s\S]*?\*\//g, '')  // 移除多行注释        .replace(/\s+/g, '');  // 移除空格        // 替换 'π' 为 'pi'    const normalizedFormula = cleanFormula.replace(/π/g, 'pi');        // 移除常见数学函数名和常量    const noFunctions = normalizedFormula.replace(/sqrt|sin|cos|tan|exp|log|pi|e|abs/g, '');        // 移除数字（包括科学记数法）    const noNumbers = noFunctions.replace(/[0-9]+\.?[0-9]*([eE][-+]?[0-9]+)?/g, '');        // 移除数学运算符和括号    const noOperators = noNumbers.replace(/[+\-*/^()=,]/g, ' ');        // 匹配所有合法的变量名（字母开头，可包含字母、数字和下划线）    const matches = noOperators.match(/[a-zA-Z][a-zA-Z0-9_]*/g) || [];        // 过滤掉数学常量和重复项    const constants = ['pi', 'e', 'i'];    const variables = [...new Set(matches)].filter(v => !constants.includes(v));        return variables;}// ...existing code...
+// 验证变量名是否合法
+function validateVariableName(input) {
+    const varName = input.value.trim();
+    const isValid = /^[a-zA-Z][a-zA-Z0-9_]*$/.test(varName);
+    if (!isValid && varName !== '') {
+        input.classList.add('error');
+        input.title = '变量名必���以字母开头，且仅包含字母、数字和下划线';
+    } else {
+        input.classList.remove('error');
+        input.title = '';
+    }
+}
+
+// ...existing code...
